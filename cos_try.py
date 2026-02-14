@@ -3,12 +3,13 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.utils.data import TensorDataset
+from torch.optim.adam import Adam
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 
 # set matplotlib
-matplotlib.rcParams['font.sans-serif'] = ['SimHei']
+matplotlib.rcParams['font.sans-serif'] = ['Noto Sans CJK SC']
 matplotlib.rcParams['axes.unicode_minus'] = False
 
 x = np.linspace(-2*np.pi,2*np.pi,400)
@@ -35,7 +36,7 @@ class Net(nn.Module):
     
 net = Net()
 
-optim = torch.optim.Adam(Net.parameters(net),lr = 0.001)
+optim = Adam(Net.parameters(net),lr = 0.001)
 Loss = nn.MSELoss()
 
 for epoch in range(100):
@@ -48,7 +49,8 @@ for epoch in range(100):
         optim.step()
 
     if (epoch+1)%10 == 0:
-        print("训练步骤：{0}，模型损失{1}".format(epoch+1,loss.item()))
+        if loss is not None:
+            print("训练步骤：{0}，模型损失{1}".format(epoch+1,loss.item()))
 
 
 predict = net(torch.tensor(X,dtype=torch.float))
