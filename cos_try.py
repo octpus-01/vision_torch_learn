@@ -1,9 +1,9 @@
 # import everything
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
-from torch.utils.data import TensorDataset
-from torch.optim.adam import Adam
+import torch.nn as nn  # neural network
+from torch.utils.data import DataLoader    # load data through batch for train
+from torch.utils.data import TensorDataset   # pack x, y to data
+from torch.optim.adam import Adam   # optimizer
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
@@ -12,11 +12,13 @@ import matplotlib.pyplot as plt
 matplotlib.rcParams['font.sans-serif'] = ['Noto Sans CJK SC']
 matplotlib.rcParams['axes.unicode_minus'] = False
 
+# dataset prepare
 x = np.linspace(-2*np.pi,2*np.pi,400)
 y = np.cos(x)
 
-X = np.expand_dims(x,axis=1)
-Y = y.reshape(400,-1)
+X = np.expand_dims(x,axis=1)   
+Y = np.expand_dims(y, axis=1)
+#Y = y.reshape(400,-1)
 
 dataset = TensorDataset(torch.tensor(X,dtype=torch.float),torch.tensor(Y,dtype=torch.float))
 dataloader = DataLoader(dataset,batch_size=10,shuffle=True)
@@ -36,7 +38,7 @@ class Net(nn.Module):
     
 net = Net()
 
-optim = Adam(Net.parameters(net),lr = 0.001)
+optim = Adam(net.parameters(),lr = 0.001)
 Loss = nn.MSELoss()
 
 for epoch in range(100):
@@ -63,6 +65,5 @@ plt.ylabel("cos(x)",size=15)
 plt.xticks(size=15)
 plt.yticks(size=15)
 plt.legend(fontsize=15)
-
 plt.savefig('cos.png')
 

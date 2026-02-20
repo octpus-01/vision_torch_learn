@@ -1,5 +1,7 @@
 # Practical Pytorch Learning
 
+[readme_zh](./README_zh.md)
+
 ## Overview
 This project is my journey of learning PyTorch for developing edge vision models, with three sub-projects serving as progressive learning steps:
 - Image classification on the CIFAR-10 dataset to master the basic PyTorch workflow
