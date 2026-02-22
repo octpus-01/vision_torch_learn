@@ -12,7 +12,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 
 # set matplotlib
-matplotlib.rcParams['font.sans-serif'] = ['Noto Sans CJK SC']
+matplotlib.rcParams['font.sans-serif'] = ['Source Han Sans SC']
 matplotlib.rcParams['axes.unicode_minus'] = False
 
 # dataset prepare
@@ -75,7 +75,7 @@ def train():
                 loss.backward()
                 optimizer.step()
                 loss_list.append(loss.data.numpy())
-                print(loss.data.numpy())
+                
 
     plt.figure(figsize=(12,7))
     labels = ['SGD','Momentum','AdaGrad','RMSprop','Adam']

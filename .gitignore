@@ -12,3 +12,7 @@ wheels/
 # train_data
 data/
 
+# train_control
+runs/
+plots/
+
