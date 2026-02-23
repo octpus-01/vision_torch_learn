@@ -6,7 +6,13 @@
 - 在树莓派 4 B 上部署 YOLOv 5-Lite 模型，实现 30 FPS 以上的实时目标检测
 - 在树莓派 4 B 上实现模型量化与剪枝，达到 35+ FPS 的极致性能
 
-## ✨ 进展
+## ✨ 进展 2026-02-23
+- 成功构建cnn cifar10的图像分类器
+- 与resnet18 分类器进行比较训练
+
+![loss](./p1/loss_p1.png)
+![acurracy](./p1/accuracy_p1.png)
+
 - 成功建立pytorch环境
 - 成功拟合 cos（x）
 ![cos(x)show](./cos.png)
