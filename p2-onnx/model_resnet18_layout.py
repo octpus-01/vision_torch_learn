@@ -66,7 +66,7 @@ trainloader = DataLoader(
     trainset,
     batch_size=BATCH_SIZE,
     shuffle=True,             # 训练时打乱顺序
-    num_workers=2,
+    num_workers=4,
     pin_memory=True if DEVICE.type == 'cuda' else False  # GPU 加速
 )
 
@@ -74,7 +74,7 @@ testloader = DataLoader(
     testset,
     batch_size=BATCH_SIZE,    # 测试也用大 batch 提速
     shuffle=False,            # 测试无需打乱
-    num_workers=2,
+    num_workers=4,
     pin_memory=True if DEVICE.type == 'cuda' else False
 )
 
@@ -169,6 +169,17 @@ for epoch in range(EPOCHS):
     writer.add_scalar('Accuracy/test', test_acc, epoch)
     print(f"Epoch [{epoch+1}/{EPOCHS}] Test Accuracy: {test_acc:.4f}")
 
+  
+    # 每 10 个 epoch 保存一个检查点
+    if (epoch + 1) % 10 == 0:
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'acc': test_acc
+        }, f'models/checkpoints/cifar10_resnet18_layout/epoch_{epoch+1}.pth')
+
+
 # ------------------------------
 # 9. 清理资源
 # ------------------------------
@@ -181,7 +192,12 @@ print("运行以下命令查看结果：\n  tensorboard --logdir=runs")
 # ------------------------------
 # 10. 保存与导出模型
 # ------------------------------
-model.save('models/resnet18_model.pth')
+torch.save({
+    'epoch': epoch,
+    'model_state_dict': model.state_dict(),
+    'optimizer_state_dict': optimizer.state_dict(),
+}, 'models/finals/resnet18_model.pth')
+
 
 model.cpu()
 model.eval()
@@ -193,7 +209,7 @@ dummy_input = torch.randn(1,3,32,32)
 torch.onnx.export(
     model,
     dummy_input,
-    'models/resnet18_model.onnx',
+    'models/finals/resnet18_model.onnx',
     opset_version=11,
     export_params=True,
     do_constant_folding=True,
@@ -210,7 +226,7 @@ print("✅ ONNX 模型已成功导出到 resnet18_cifar10.onnx")
 import onnx
 
 # 加载并检查模型
-onnx_model = onnx.load("models/resnet18_cifar10.onnx")
+onnx_model = onnx.load("models/finals/resnet18_model.onnx")
 onnx.checker.check_model(onnx_model)
 print("✅ ONNX 模型结构验证通过！")
 
