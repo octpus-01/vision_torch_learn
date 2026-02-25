@@ -1,5 +1,5 @@
 # ==============================
-# CIFAR-10 分类训练脚本 (SimpleCNN + TensorBoard)
+# CIFAR-10 分类训练脚本 (Resnet18 + TensorBoard + Layout)
 # ==============================
 
 # ------------------------------
@@ -17,7 +17,7 @@ from torch.utils.tensorboard.writer import SummaryWriter
 # 2. 全局配置
 # ------------------------------
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # 自动选择 GPU/CPU
-EPOCHS = 100
+EPOCHS = 25
 BATCH_SIZE = 128
 
 print(f"Using device: {DEVICE}")
@@ -79,39 +79,21 @@ testloader = DataLoader(
 )
 
 # ------------------------------
-# 4. 定义模型：简单 CNN
+# 4. 定义模型：resnet18
 # ------------------------------
-class SimpleCNN(nn.Module):
-    """一个用于 CIFAR-10 分类的轻量级 CNN"""
-    def __init__(self):
-        super(SimpleCNN, self).__init__()
-        # 特征提取层（卷积 + 激活 + 池化）
-        self.features = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, padding=1),  # 输入: 32x32x3 → 输出: 32x32x32
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),       # → 16x16x32
-            nn.Conv2d(32, 64, kernel_size=3, padding=1), # → 16x16x64
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2)        # → 8x8x64
-        )
-        # 分类器（全连接层）
-        self.classifier = nn.Sequential(
-            nn.Linear(64 * 8 * 8, 128),  # 展平后输入
-            nn.ReLU(inplace=True),
-            nn.Linear(128, 10)           # CIFAR-10 有 10 个类别
-        )
+# 使用预训练模型（但不加载预训练权重）
+model = torchvision.models.resnet18(weights=None)
 
-    def forward(self, x):
-        """前向传播"""
-        x = self.features(x)           # 提取特征
-        x = torch.flatten(x, 1)        # 展平: [B, 64, 8, 8] → [B, 64*8*8]
-        x = self.classifier(x)         # 分类
-        return x
+# 修改输入层（CIFAR-10 是 32x32，原 ResNet 为 224x224）
+model.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
+
+# 修改输出层（10类）
+model.fc = nn.Linear(model.fc.in_features, 10)
 
 # ------------------------------
 # 5. 初始化模型、优化器、损失函数
 # ------------------------------
-model = SimpleCNN().to(DEVICE)  # ✅ 先实例化，再 .to()
+model = model.to(DEVICE)  # ✅ 先实例化，再 .to()
 
 optimizer = Adam(model.parameters(), lr=0.001)
 criterion = nn.CrossEntropyLoss()  # 适用于多分类任务
@@ -119,7 +101,7 @@ criterion = nn.CrossEntropyLoss()  # 适用于多分类任务
 # ------------------------------
 # 6. TensorBoard 日志记录器
 # ------------------------------
-writer = SummaryWriter(log_dir='runs/cifar10_simplecnn')
+writer = SummaryWriter(log_dir='runs/cifar10_resnet18_layout')
 
 # ------------------------------
 # 7. 评估函数（计算测试准确率）
@@ -176,7 +158,7 @@ for epoch in range(EPOCHS):
         
         # 每 100 个 batch 记录一次平均损失
         if (batch_idx + 1) % 50 == 0:
-            avg_loss = running_loss / 100
+            avg_loss = running_loss / 50
             global_step = epoch * len(trainloader) + batch_idx
             writer.add_scalar('Loss/train', avg_loss, global_step)
             print(f"Epoch [{epoch+1}/{EPOCHS}], Step [{batch_idx+1}/{len(trainloader)}], Loss: {avg_loss:.4f}")
@@ -191,5 +173,44 @@ for epoch in range(EPOCHS):
 # 9. 清理资源
 # ------------------------------
 writer.close()
-print("训练完成！TensorBoard 日志已保存至 runs/cifar10_simplecnn")
+print("训练完成！TensorBoard 日志已保存至 runs/cifar10_resnet18_layout")
 print("运行以下命令查看结果：\n  tensorboard --logdir=runs")
+
+
+
+# ------------------------------
+# 10. 保存与导出模型
+# ------------------------------
+model.save('models/resnet18_model.pth')
+
+model.cpu()
+model.eval()
+
+
+# example input
+dummy_input = torch.randn(1,3,32,32)
+
+torch.onnx.export(
+    model,
+    dummy_input,
+    'models/resnet18_model.onnx',
+    opset_version=11,
+    export_params=True,
+    do_constant_folding=True,
+    input_names=['images'],
+    output_names=['logits'],
+    dynamic_axes={
+        'images': {0: 'batch'},
+        'logits': {0: 'batch'}
+    }
+)
+
+print("✅ ONNX 模型已成功导出到 resnet18_cifar10.onnx")
+
+import onnx
+
+# 加载并检查模型
+onnx_model = onnx.load("models/resnet18_cifar10.onnx")
+onnx.checker.check_model(onnx_model)
+print("✅ ONNX 模型结构验证通过！")
+

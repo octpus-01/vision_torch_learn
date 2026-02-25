@@ -82,7 +82,7 @@ testloader = DataLoader(
 # 4. 定义模型：resnet18
 # ------------------------------
 # 使用预训练模型（但不加载预训练权重）
-model = torchvision.models.resnet18(pretrained=False)
+model = torchvision.models.resnet18(weights=False)
 
 # 修改输入层（CIFAR-10 是 32x32，原 ResNet 为 224x224）
 model.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
