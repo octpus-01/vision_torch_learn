@@ -8,12 +8,16 @@ This project is my journey of learning PyTorch for developing edge vision models
 - Deploying the YOLOv5-Lite model on a Raspberry Pi 4 B to achieve real-time object detection at over 30 FPS
 - Implementing model quantization and pruning on a Raspberry Pi 4 B to reach ultimate performance of over 35 FPS
 
-## ✨ Progress 2026-02-23p1
+## ✨ Progress 
+2026-02-26p2
+- Managed to layout onnx model
+
+2026-02-23p1
 - Finish training simple cnn model on classifying cifar10
 - compare resnet18 with cnn models results
 
-![loss](./p1/loss_p1.png)
-![acurracy](./p1/accuracy_p1.png)
+![loss](./p1-models/loss_p1.png)
+![acurracy](./p1-models/accuracy_p1.png)
 
 
 - Managed to construct Pytorch environment
