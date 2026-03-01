@@ -25,14 +25,14 @@ def normalize_image(image):
     应用与训练时相同的归一化
     CIFAR-10 常用: mean=[0.4914, 0.4822, 0.4465], std=[0.2470, 0.2435, 0.2616]
     """
-    mean = np.array([0.4914, 0.4822, 0.4465])
-    std = np.array([0.2470, 0.2435, 0.2616])
-    return (image / 255.0 - mean) / std
+    mean = np.array([0.4914, 0.4822, 0.4465], dtype=np.float32)
+    std = np.array([0.2470, 0.2435, 0.2616], dtype=np.float32)
+    return ((image / 255.0 - mean) / std).astype(np.float32)
 
 def main():
     # 1. 加载测试数据
     print("正在加载 CIFAR-10 测试集...")
-    images, labels = load_cifar10_test_data('cifar-10-batches-py')
+    images, labels = load_cifar10_test_data('data/cifar-10-batches-py')
     print(f"加载完成: {images.shape[0]} 张图像")
     
     # 2. 预处理：归一化 + 转为 channel-first (N, 3, 32, 32)
@@ -42,15 +42,18 @@ def main():
         for img in images
     ], axis=0)  # shape: (10000, 3, 32, 32)
     
+    # 确保数据类型为 float32
+    processed_images = processed_images.astype(np.float32)
+    
     # 3. 加载 ONNX 模型
     print("正在加载 ONNX 模型...")
-    session = ort.InferenceSession("model.onnx", providers=['CPUExecutionProvider'])
+    session = ort.InferenceSession("models/resnet18_model.onnx", providers=['CPUExecutionProvider'])
     input_name = session.get_inputs()[0].name
     output_name = session.get_outputs()[0].name
     
     # 4. 批量推理（避免内存溢出）
     print("开始推理...")
-    batch_size = 16
+    batch_size = 32
     correct = 0
     total = 0
     
@@ -60,7 +63,7 @@ def main():
         
         # 推理
         outputs = session.run([output_name], {input_name: batch_images})
-        predictions = np.argmax(outputs[0], axis=1)  #type: ignore
+        predictions = np.argmax(outputs[0], axis=1) #type:ignore
         
         # 统计正确数
         correct += np.sum(predictions == batch_labels)
