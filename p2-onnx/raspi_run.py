@@ -2,6 +2,8 @@ import numpy as np
 import pickle
 import os
 import onnxruntime as ort
+from tqdm import tqdm
+import time
 
 def load_cifar10_test_data(data_dir):
     """
@@ -56,7 +58,10 @@ def main():
     batch_size = 32
     correct = 0
     total = 0
-    
+    num_batches = images.shape[0] // batch_size + 1
+    pbar = tqdm(total=num_batches, desc="推理", unit="batch")
+
+    start_time = time.time()
     for i in range(0, len(processed_images), batch_size):
         batch_images = processed_images[i:i+batch_size]
         batch_labels = labels[i:i+batch_size]
@@ -69,12 +74,14 @@ def main():
         correct += np.sum(predictions == batch_labels)
         total += len(batch_labels)
         
-        if i % 1000 == 0:
-            print(f"已处理 {total}/10000 张图像...")
-    
+        pbar.update(1)
+
+    pbar.close()
+    end_time = time.time()    
     # 5. 计算准确率
     accuracy = correct / total
-    print(f"\n✅ 最终准确率: {accuracy:.4f} ({correct}/{total})")
+    duration = round(end_time - start_time, 4)
+    print(f"\n✅ 最终准确率: {accuracy:.4f} ({correct}/{total})，耗时{duration}s")
 
 if __name__ == "__main__":
     main()
