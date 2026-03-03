@@ -101,7 +101,7 @@ criterion = nn.CrossEntropyLoss()  # 适用于多分类任务
 # ------------------------------
 # 6. TensorBoard 日志记录器
 # ------------------------------
-writer = SummaryWriter(log_dir='runs/cifar10_resnet18')
+writer = SummaryWriter(log_dir='runs/cifar10_resnet18_gpu')
 
 # ------------------------------
 # 7. 评估函数（计算测试准确率）
@@ -173,5 +173,5 @@ for epoch in range(EPOCHS):
 # 9. 清理资源
 # ------------------------------
 writer.close()
-print("训练完成！TensorBoard 日志已保存至 runs/cifar10_simplecnn")
+print("训练完成！TensorBoard 日志已保存至 runs/cifar10_resnet16_gpu")
 print("运行以下命令查看结果：\n  tensorboard --logdir=runs")
