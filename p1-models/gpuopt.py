@@ -1,331 +1,188 @@
-# ==============================
-# CIFAR-10 分类训练脚本 (Resnet18 + TensorBoard)
-# 最终完美版：无重复打印 + TensorBoard正常显示
-# ==============================
+# gpuopt.py
+"""
+RTX 2070 Super 专属优化训练脚本（CIFAR-10 + ResNet18）
+- 修复 Pylance 私有导入警告
+- 避免 Windows "页面文件不足" 错误
+- 启用混合精度 + 大 batch_size
+- 精简无效优化，专注真实提速
+"""
 
-# ------------------------------
-# 1. 导入必要库
-# ------------------------------
+import os
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
 import torchvision
 import torchvision.transforms as transforms
-from torch.optim import Adam
-from torch.utils.tensorboard import SummaryWriter
-import multiprocessing
-import time
-import os
+from torch.utils.data import DataLoader
+
+# 🔧 修复 Pylance 警告：显式导入
+from torch.optim.adam import Adam
+from torch.utils.tensorboard.writer import SummaryWriter
+from torch.cuda.amp import autocast, GradScaler  # 正确路径！
 
 # ------------------------------
-# 2. 全局配置（仅定义，不执行打印）
+# 1. 全局配置（RTX 2070 Super 专属）
 # ------------------------------
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-EPOCHS = 100
-BASE_BATCH_SIZE = 128
-GRADIENT_ACCUMULATION_STEPS = 4  # 等效batch size=256（不是1024，你之前写错了）
-NUM_WORKERS = 2
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+EPOCHS = 30
+BASE_BATCH_SIZE = 512          # RTX 2070 Super 8GB 显存可轻松支持
+NUM_WORKERS = 2                # Windows 避免内存爆炸（原4→2）
 PIN_MEMORY = True
 MIXED_PRECISION = True
+LOG_DIR = "./runs/cifar10_resnet18_260305"
+
+# 确保日志目录存在
+os.makedirs(LOG_DIR, exist_ok=True)
 
 # ------------------------------
-# 3. 工具函数（避免全局执行）
+# 2. 数据预处理
 # ------------------------------
-def print_system_info():
-    """仅在main函数中执行一次系统信息打印"""
-    print("="*60)
-    print("系统/设备信息")
-    print("="*60)
-    print(f"Using device: {DEVICE}")
-    if torch.cuda.is_available():
-        print(f"GPU Name: {torch.cuda.get_device_name(0)}")
-        print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
-    print(f"Effective Batch Size: {BASE_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS}")
-    print(f"Torchvision Version: {torchvision.__version__}")
-    print(f"PyTorch Version: {torch.__version__}")
-    print("="*60 + "\n")
+print("⚙️  加载并预处理 CIFAR-10 数据集...")
+
+transform_train = transforms.Compose([
+    transforms.RandomCrop(32, padding=4),
+    transforms.RandomHorizontalFlip(),
+    transforms.ToTensor(),
+    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)),
+])
+
+transform_test = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)),
+])
+
+trainset = torchvision.datasets.CIFAR10(
+    root='./data', train=True, download=True, transform=transform_train
+)
+testset = torchvision.datasets.CIFAR10(
+    root='./data', train=False, download=True, transform=transform_test
+)
+
+# 关键：NUM_WORKERS=2 避免 Windows 页面文件不足
+trainloader = DataLoader(
+    trainset,
+    batch_size=BASE_BATCH_SIZE,
+    shuffle=True,
+    num_workers=NUM_WORKERS,
+    pin_memory=PIN_MEMORY,
+    persistent_workers=True  # 减少 worker 重建开销
+)
+
+testloader = DataLoader(
+    testset,
+    batch_size=BASE_BATCH_SIZE,
+    shuffle=False,
+    num_workers=NUM_WORKERS,
+    pin_memory=PIN_MEMORY,
+    persistent_workers=True
+)
 
 # ------------------------------
-# 4. 数据预处理
+# 3. 模型、优化器、损失函数
 # ------------------------------
-def get_dataloaders():
-    # 数据增强
-    train_transform = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize(
-            mean=(0.4914, 0.4822, 0.4465),
-            std=(0.2470, 0.2435, 0.2616)
-        )
-    ])
-    
-    test_transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize(
-            mean=(0.4914, 0.4822, 0.4465),
-            std=(0.2470, 0.2435, 0.2616)
-        )
-    ])
+print("🧠 构建 ResNet18 模型...")
 
-    # 加载数据集
-    trainset = torchvision.datasets.CIFAR10(
-        root='data/cifar10',
-        train=True,
-        download=True,
-        transform=train_transform
-    )
+model = torchvision.models.resnet18(weights=None, num_classes=10)
+model = model.to(DEVICE)
 
-    testset = torchvision.datasets.CIFAR10(
-        root='data/cifar10',
-        train=False,
-        download=True,
-        transform=test_transform
-    )
+# 启用 cuDNN 自动调优（加速 CNN）
+torch.backends.cudnn.benchmark = True
 
-    # 数据加载器
-    trainloader = DataLoader(
-        trainset,
-        batch_size=BASE_BATCH_SIZE,
-        shuffle=True,
-        num_workers=NUM_WORKERS,
-        pin_memory=PIN_MEMORY,
-        drop_last=True
-    )
+criterion = nn.CrossEntropyLoss()
+optimizer = Adam(model.parameters(), lr=0.001, fused=True)  # fused=True 减少 kernel launch
 
-    testloader = DataLoader(
-        testset,
-        batch_size=BASE_BATCH_SIZE * 2,
-        shuffle=False,
-        num_workers=NUM_WORKERS,
-        pin_memory=PIN_MEMORY
-    )
+# 混合精度训练组件
+scaler = GradScaler(enabled=MIXED_PRECISION)
 
-    return trainloader, testloader
+# TensorBoard 日志
+writer = SummaryWriter(log_dir=LOG_DIR)
 
 # ------------------------------
-# 5. 模型定义
+# 4. 训练函数
 # ------------------------------
-def get_model():
-    model = torchvision.models.resnet18(weights=None)
-    model.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
-    model.fc = nn.Linear(model.fc.in_features, 10)
-    
-    if torch.cuda.is_available():
-        torch.backends.cudnn.benchmark = True
-        torch.backends.cudnn.deterministic = False
-    
-    model = model.to(DEVICE)
-    if torch.cuda.device_count() > 1:
-        model = nn.DataParallel(model)
-    
-    return model
-
-# ------------------------------
-# 6. 数据传输函数
-# ------------------------------
-def move_to_device(batch, device):
-    inputs, labels = batch
-    return inputs.to(device, non_blocking=True), labels.to(device, non_blocking=True)
-
-# ------------------------------
-# 7. 评估函数
-# ------------------------------
-@torch.no_grad()
-def evaluate(model, dataloader, device):
-    model.eval()
+def train_one_epoch(epoch):
+    model.train()
+    running_loss = 0.0
     correct = 0
     total = 0
-    start_time = time.time()
-    
-    if MIXED_PRECISION and torch.cuda.is_available():
-        try:
-            from torch.amp import autocast
-            with autocast('cuda'):
-                for batch in dataloader:
-                    inputs, labels = move_to_device(batch, device)
-                    outputs = model(inputs)
-                    _, predicted = torch.max(outputs, dim=1)
-                    total += labels.size(0)
-                    correct += (predicted == labels).sum().item()
-        except ImportError:
-            from torch.cuda.amp import autocast
-            with autocast():
-                for batch in dataloader:
-                    inputs, labels = move_to_device(batch, device)
-                    outputs = model(inputs)
-                    _, predicted = torch.max(outputs, dim=1)
-                    total += labels.size(0)
-                    correct += (predicted == labels).sum().item()
-    else:
-        for batch in dataloader:
-            inputs, labels = move_to_device(batch, device)
+
+    for batch_idx, (inputs, targets) in enumerate(trainloader):
+        inputs, targets = inputs.to(DEVICE, non_blocking=True), targets.to(DEVICE, non_blocking=True)
+
+        optimizer.zero_grad()
+
+        # 混合精度训练（关键！）
+        with autocast(enabled=MIXED_PRECISION):
             outputs = model(inputs)
-            _, predicted = torch.max(outputs, dim=1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
-    
-    acc = correct / total
-    print(f"Evaluation Time: {time.time() - start_time:.2f}s, Test Accuracy: {acc:.4f}")
-    return acc
+            loss = criterion(outputs, targets)
+
+        # 缩放损失 + 反向传播
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+
+        # 统计
+        running_loss += loss.item()
+        _, predicted = outputs.max(1)
+        total += targets.size(0)
+        correct += predicted.eq(targets).sum().item()
+
+        if batch_idx % 50 == 0:
+            print(f"Epoch [{epoch+1}/{EPOCHS}] Batch {batch_idx}/{len(trainloader)} "
+                  f"Loss: {running_loss/(batch_idx+1):.3f} Acc: {100.*correct/total:.2f}%")
+
+    epoch_loss = running_loss / len(trainloader)
+    epoch_acc = 100. * correct / total
+    writer.add_scalar('Train/Loss', epoch_loss, epoch)
+    writer.add_scalar('Train/Accuracy', epoch_acc, epoch)
+    return epoch_loss, epoch_acc
 
 # ------------------------------
-# 8. 主训练逻辑
+# 5. 测试函数
 # ------------------------------
-def main():
-    # 1. 只打印一次系统信息（核心修复：解决重复打印）
-    print_system_info()
-    
-    # 2. GPU内存优化
-    if torch.cuda.is_available():
-        torch.cuda.set_per_process_memory_fraction(0.9)
-        torch.cuda.empty_cache()
-    
-    # 3. 获取数据和模型
-    trainloader, testloader = get_dataloaders()
-    model = get_model()
-    
-    # 4. 初始化混合精度缩放器
-    scaler = None
-    if MIXED_PRECISION and torch.cuda.is_available():
-        try:
-            from torch.amp import GradScaler
-            scaler = GradScaler('cuda')
-        except ImportError:
-            from torch.cuda.amp import GradScaler
-            scaler = GradScaler()
-    
-    # 5. 优化器
-    optimizer_kwargs = {
-        'lr': 0.001,
-        'betas': (0.9, 0.999),
-        'eps': 1e-8
-    }
-    if torch.cuda.is_available() and hasattr(torch.optim.Adam, 'fused'):
-        optimizer_kwargs['fused'] = True
-    
-    optimizer = Adam(model.parameters(), **optimizer_kwargs)
-    criterion = nn.CrossEntropyLoss().to(DEVICE)
-    
-    # 6. TensorBoard配置（核心修复：确保日志写入正常）
-    log_dir = 'runs/cifar10_resnet18_260304-2'
-    # 清空旧日志（避免缓存问题）
-    if os.path.exists(log_dir):
-        import shutil
-        shutil.rmtree(log_dir)
-    writer = SummaryWriter(log_dir=log_dir)
-    
-    # 7. 训练初始化
-    print("开始训练...\n")
-    global_step = 0  # 确保step连续递增
-    model.train()
-    
+def test(epoch):
+    model.eval()
+    test_loss = 0
+    correct = 0
+    total = 0
+
+    with torch.no_grad():
+        for inputs, targets in testloader:
+            inputs, targets = inputs.to(DEVICE, non_blocking=True), targets.to(DEVICE, non_blocking=True)
+            outputs = model(inputs)
+            loss = criterion(outputs, targets)
+
+            test_loss += loss.item()
+            _, predicted = outputs.max(1)
+            total += targets.size(0)
+            correct += predicted.eq(targets).sum().item()
+
+    acc = 100. * correct / total
+    avg_loss = test_loss / len(testloader)
+    writer.add_scalar('Test/Loss', avg_loss, epoch)
+    writer.add_scalar('Test/Accuracy', acc, epoch)
+    print(f"\n✅ Test Epoch {epoch+1}: Loss={avg_loss:.3f}, Acc={acc:.2f}%\n")
+    return avg_loss, acc
+
+# ------------------------------
+# 6. 主训练循环
+# ------------------------------
+if __name__ == "__main__":
+    print(f"🚀 开始训练！设备: {DEVICE}")
+    print(f"   Batch Size: {BASE_BATCH_SIZE}")
+    print(f"   Num Workers: {NUM_WORKERS}")
+    print(f"   Mixed Precision: {'ON' if MIXED_PRECISION else 'OFF'}\n")
+
+    best_acc = 0
     for epoch in range(EPOCHS):
-        epoch_start = time.time()
-        running_loss = 0.0
-        batch_count = 0
-        
-        for batch_idx, batch in enumerate(trainloader):
-            inputs, labels = move_to_device(batch, DEVICE)
-            
-            # 混合精度前向传播
-            if scaler is not None:
-                try:
-                    from torch.amp import autocast
-                    with autocast('cuda'):
-                        outputs = model(inputs)
-                        loss = criterion(outputs, labels)
-                        loss_step = loss / GRADIENT_ACCUMULATION_STEPS
-                except ImportError:
-                    from torch.cuda.amp import autocast
-                    with autocast():
-                        outputs = model(inputs)
-                        loss = criterion(outputs, labels)
-                        loss_step = loss / GRADIENT_ACCUMULATION_STEPS
-            else:
-                outputs = model(inputs)
-                loss = criterion(outputs, labels)
-                loss_step = loss / GRADIENT_ACCUMULATION_STEPS
-            
-            # 反向传播
-            if scaler is not None:
-                scaler.scale(loss_step).backward()
-            else:
-                loss_step.backward()
-            
-            # 梯度累积更新
-            batch_count += 1
-            if batch_count % GRADIENT_ACCUMULATION_STEPS == 0:
-                # 梯度裁剪
-                if scaler is not None:
-                    scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                
-                # 更新参数
-                if scaler is not None:
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    optimizer.step()
-                
-                optimizer.zero_grad(set_to_none=True)
-                
-                # 累加损失（核心修复：使用原始loss值）
-                running_loss += loss.item()
-                batch_count = 0  # 重置累积计数
-                
-                # 每10个更新步骤记录一次日志（确保step连续）
-                if global_step % 10 == 0:
-                    avg_loss = running_loss / 10
-                    # 写入TensorBoard（核心：global_step每次递增）
-                    writer.add_scalar('Loss/train', avg_loss, global_step)
-                    writer.add_scalar('Loss/epoch', avg_loss, epoch)
-                    
-                    # 打印日志
-                    if torch.cuda.is_available():
-                        gpu_mem = torch.cuda.memory_allocated() / 1024**3
-                        print(f"Epoch [{epoch+1}/{EPOCHS}], Batch [{batch_idx+1}/{len(trainloader)}], "
-                              f"Step: {global_step}, Loss: {avg_loss:.4f}, GPU Mem: {gpu_mem:.2f} GB")
-                    else:
-                        print(f"Epoch [{epoch+1}/{EPOCHS}], Batch [{batch_idx+1}/{len(trainloader)}], "
-                              f"Step: {global_step}, Loss: {avg_loss:.4f}")
-                    
-                    running_loss = 0.0
-            
-            global_step += 1  # 关键：每次batch都递增，确保step连续
-        
-        # 每个epoch评估并记录准确率
-        test_acc = evaluate(model, testloader, DEVICE)
-        writer.add_scalar('Accuracy/test', test_acc, epoch)
-        writer.add_scalar('Time/epoch', time.time() - epoch_start, epoch)
-        
-        print(f"\nEpoch [{epoch+1}/{EPOCHS}] Complete - Time: {time.time() - epoch_start:.2f}s, Test Accuracy: {test_acc:.4f}\n")
-        
-        # 保存模型
-        if (epoch + 1) % 10 == 0:
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'test_acc': test_acc
-            }, f'{log_dir}/cifar10_resnet18_epoch_{epoch+1}.pth')
-            print(f"Model saved at epoch {epoch+1}\n")
+        train_loss, train_acc = train_one_epoch(epoch)
+        test_loss, test_acc = test(epoch)
 
-    # 最终保存
-    torch.save(model.state_dict(), f'{log_dir}/cifar10_resnet18_final.pth')
+        # 保存最佳模型
+        if test_acc > best_acc:
+            best_acc = test_acc
+            torch.save(model.state_dict(), "best_model.pth")
+            print(f"💾 模型已保存 (Acc: {best_acc:.2f}%)")
+
     writer.close()
-    
-    # 打印TensorBoard启动命令
-    print("="*60)
-    print("训练完成！")
-    print(f"最终模型保存至: {log_dir}/cifar10_resnet18_final.pth")
-    print("\n启动TensorBoard查看日志：")
-    print(f"tensorboard --logdir={log_dir}")
-    print("="*60)
-
-# ------------------------------
-# 9. 主函数入口
-# ------------------------------
-if __name__ == '__main__':
-    multiprocessing.freeze_support()
-    main()
+    print(f"\n🎉 训练完成！最佳测试准确率: {best_acc:.2f}%")
+    print(f"📊 TensorBoard 日志: tensorboard --logdir={LOG_DIR}")
